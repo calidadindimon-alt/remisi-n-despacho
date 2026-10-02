@@ -23,7 +23,7 @@
   const CAPACIDAD = FORMATO.ultimaFila - FORMATO.primeraFila + 1;
 
   const LS = { stock: 'remisiones.stock.v2', draft: 'remisiones.draft.v2', inventario: 'remisiones.inventario.v2' };
-  const PAGINA = 60; // tarjetas que se muestran por página de resultados
+  const PAGINA = 1000; // tarjetas por página: alto para que siempre se vea el inventario completo
 
   /* ----------------------------- Utilidades -------------------------------- */
   const $ = (id) => document.getElementById(id);
@@ -106,11 +106,12 @@
   }
 
   function renderChips() {
-    const cats = ['Todas', ...new Set(inventario.map((i) => i.categoria))];
-    $('chips').innerHTML = cats.map((c) => {
+    const conteo = { Todas: inventario.length };
+    inventario.forEach((i) => (conteo[i.categoria] = (conteo[i.categoria] || 0) + 1));
+    $('chips').innerHTML = Object.keys(conteo).map((c) => {
       const on = c === categoria;
       return `<button type="button" data-cat="${esc(c)}" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ring-1 transition ${
-        on ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'}">${esc(c)}</button>`;
+        on ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'}">${esc(c)} <span class="${on ? 'text-amber-300' : 'text-slate-400'}">${conteo[c]}</span></button>`;
     }).join('');
   }
 
