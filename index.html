@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Remisiones de Despacho</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- JSZip: lee y reescribe el .xlsx de la plantilla celda a celda, conservando logo, estilos, bordes,
+       celdas combinadas, listas desplegables y área de impresión del formato original. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased">
+  <!-- Barra superior -->
+  <header class="sticky top-0 z-30 bg-slate-900 text-white shadow">
+    <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
+      <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-400 font-black text-slate-900">R</div>
+      <div class="min-w-0 flex-1">
+        <h1 class="truncate text-base font-semibold leading-tight sm:text-lg">Remisiones de Despacho</h1>
+        <p class="truncate text-xs text-slate-400">Inventario de materiales · Construcción e industria</p>
+      </div>
+      <button id="btnResetInv" type="button" class="shrink-0 rounded-md px-2.5 py-1.5 text-xs text-slate-300 ring-1 ring-slate-700 hover:bg-slate-800" title="Restaurar stock de los datos de prueba">Restablecer<span class="hidden sm:inline"> inventario</span></button>
+    </div>
+  </header>
+
+  <main class="mx-auto grid max-w-7xl gap-4 px-4 pb-28 pt-4 lg:grid-cols-[minmax(0,1fr)_420px] lg:pb-8">
+    <!-- Columna izquierda: buscador + inventario -->
+    <section aria-label="Inventario" class="min-w-0">
+      <div class="sticky top-[60px] z-20 -mx-4 bg-slate-100/95 px-4 pb-3 pt-1 backdrop-blur">
+        <label for="search" class="sr-only">Buscar en el inventario</label>
+        <div class="relative">
+          <svg class="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.45 4.39l3.08 3.08a.75.75 0 11-1.06 1.06l-3.08-3.08A7 7 0 012 9z" clip-rule="evenodd"/></svg>
+          <input id="search" type="search" autocomplete="off" enterkeyhint="search"
+            placeholder="Buscar: HEA 220, tubería 4&quot;, válvula bola…"
+            class="w-full rounded-xl border-0 bg-white py-3 pl-10 pr-4 text-base shadow-sm ring-1 ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-amber-500" />
+        </div>
+        <div id="chips" class="mt-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]"></div>
+        <p id="resultCount" class="mt-2 text-xs text-slate-500"></p>
+      </div>
+
+      <ul id="results" class="grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2"></ul>
+      <div id="empty" class="hidden rounded-xl bg-white p-8 text-center text-sm text-slate-500 ring-1 ring-slate-200">
+        No hay materiales que coincidan con la búsqueda.
+      </div>
+    </section>
+
+    <!-- Columna derecha: lista de despacho (panel inferior desplegable en móvil) -->
+    <div id="overlay" class="fixed inset-0 z-40 hidden bg-slate-900/50 lg:hidden"></div>
+    <aside id="panel" aria-label="Lista de despacho"
+      class="fixed inset-x-0 bottom-0 z-50 flex max-h-[92dvh] translate-y-full flex-col rounded-t-2xl bg-white shadow-2xl transition-transform duration-300
+             lg:sticky lg:top-[76px] lg:z-10 lg:max-h-[calc(100vh-92px)] lg:translate-y-0 lg:rounded-2xl lg:shadow-sm lg:ring-1 lg:ring-slate-200">
+      <div class="mx-auto mt-2 h-1.5 w-10 rounded-full bg-slate-300 lg:hidden" aria-hidden="true"></div>
+      <div class="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
+        <h2 class="flex-1 text-base font-semibold">Lista de despacho
+          <span id="panelCount" class="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">0</span>
+        </h2>
+        <button id="btnClear" type="button" class="rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50">Vaciar</button>
+        <button id="btnClosePanel" type="button" class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden" aria-label="Cerrar">
+          <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/></svg>
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto overscroll-contain">
+        <ol id="dispatchList" class="divide-y divide-slate-100"></ol>
+        <p id="dispatchEmpty" class="px-4 py-8 text-center text-sm text-slate-500">
+          Marque materiales en el inventario para agregarlos a la remisión.
+        </p>
+
+        <!-- Encabezado y pie de la remisión (se mapean a las celdas del formato) -->
+        <form id="form" class="space-y-3 border-t border-slate-200 bg-slate-50 px-4 py-4" autocomplete="off" onsubmit="return false">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Datos de la remisión</h3>
+          <div>
+            <label for="fObra" class="mb-1 block text-xs font-medium text-slate-600">Obra o proyecto <span class="text-red-500">*</span></label>
+            <input id="fObra" list="dlClientes" required class="w-full rounded-lg border-slate-300 bg-white px-3 py-2 text-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-amber-500" placeholder="Ej: FLORA FOOD" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="fFecha" class="mb-1 block text-xs font-medium text-slate-600">Fecha</label>
+              <input id="fFecha" type="date" class="w-full rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-amber-500" />
+            </div>
+            <div>
+              <label for="fResp" class="mb-1 block text-xs font-medium text-slate-600">Actualización del contenido</label>
+              <input id="fResp" list="dlPersonas" class="w-full rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-amber-500" placeholder="Responsable" />
+            </div>
+          </div>
+          <div>
+            <label for="fObs" class="mb-1 block text-xs font-medium text-slate-600">Observaciones</label>
+            <textarea id="fObs" rows="2" class="w-full rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-amber-500"></textarea>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="fEntrega" class="mb-1 block text-xs font-medium text-slate-600">Quién entrega</label>
+              <input id="fEntrega" list="dlPersonas" class="w-full rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-amber-500" />
+            </div>
+            <div>
+              <label for="fRecibe" class="mb-1 block text-xs font-medium text-slate-600">Quién recibe</label>
+              <input id="fRecibe" list="dlPersonas" class="w-full rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-amber-500" />
+            </div>
+          </div>
+          <label class="flex items-center gap-2 text-sm text-slate-700">
+            <input id="fDescontar" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500" checked />
+            Descontar cantidades del stock al generar
+          </label>
+        </form>
+      </div>
+
+      <div class="safe-bottom border-t border-slate-200 px-4 pt-3">
+        <button id="btnGenerar" type="button"
+          class="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-base font-semibold text-slate-900 shadow-sm hover:bg-amber-400 active:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50">
+          <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/><path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/></svg>
+          Generar Remisión (.xlsx)
+        </button>
+        <p id="capacity" class="mt-1 text-center text-[11px] text-slate-400"></p>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Barra flotante (solo móvil) -->
+  <div class="safe-bottom fixed inset-x-0 bottom-0 z-30 px-4 pt-2 lg:hidden">
+    <button id="btnOpenPanel" type="button"
+      class="flex w-full items-center justify-between rounded-2xl bg-slate-900 px-5 py-3.5 text-white shadow-lg active:bg-slate-800">
+      <span class="flex items-center gap-2 text-sm font-medium">
+        <span id="fabCount" class="flex h-6 min-w-6 items-center justify-center rounded-full bg-amber-400 px-1.5 text-xs font-bold text-slate-900">0</span>
+        ítems en despacho
+      </span>
+      <span class="text-sm font-semibold text-amber-300">Ver y generar →</span>
+    </button>
+  </div>
+
+  <datalist id="dlClientes"></datalist>
+  <datalist id="dlPersonas"></datalist>
+
+  <!-- Notificaciones -->
+  <div id="toast" role="status" aria-live="polite"
+    class="pointer-events-none fixed left-1/2 top-20 z-[60] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-medium opacity-0 shadow-lg transition-opacity duration-300"></div>
+
+  <script src="js/inventario.js"></script>
+  <script src="js/plantilla.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
