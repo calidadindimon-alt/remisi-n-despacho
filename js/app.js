@@ -22,7 +22,8 @@
   };
   const CAPACIDAD = FORMATO.ultimaFila - FORMATO.primeraFila + 1;
 
-  const LS = { stock: 'remisiones.stock.v1', draft: 'remisiones.draft.v1' };
+  const LS = { stock: 'remisiones.stock.v2', draft: 'remisiones.draft.v2', inventario: 'remisiones.inventario.v2' };
+  const PAGINA = 60; // tarjetas que se muestran por página de resultados
 
   /* ----------------------------- Utilidades -------------------------------- */
   const $ = (id) => document.getElementById(id);
@@ -54,17 +55,36 @@
   }
 
   /* ------------------------------- Estado ---------------------------------- */
-  const stockGuardado = lsGet(LS.stock) || {};
-  const inventario = window.INVENTARIO_MOCK.map((it) => ({
-    ...it,
-    stock: Object.prototype.hasOwnProperty.call(stockGuardado, it.ref) ? stockGuardado[it.ref] : it.stock,
-    _q: norm([it.ref, it.descripcion, it.categoria, it.ubicacion].join(' '))
-  }));
-  const porRef = new Map(inventario.map((it) => [it.ref, it]));
+  /** Inventario activo: el último Excel cargado desde la app o, si no hay, el de js/inventario.js. */
+  let inventario = [];
+  let porRef = new Map(); // id -> ítem
+  let origenInventario = '';
+
+  function inventarioFuente() {
+    const importado = lsGet(LS.inventario);
+    if (importado && Array.isArray(importado.items) && importado.items.length) {
+      return { items: importado.items, origen: `${importado.archivo} · cargado ${importado.fecha}` };
+    }
+    return { items: window.INVENTARIO_BASE || [], origen: 'Inventario_2.xlsx (incluido)' };
+  }
+
+  function cargarInventario() {
+    const { items, origen } = inventarioFuente();
+    const stockGuardado = lsGet(LS.stock) || {};
+    origenInventario = origen;
+    inventario = items.map((it) => ({
+      ...it,
+      stock: Object.prototype.hasOwnProperty.call(stockGuardado, it.id) ? stockGuardado[it.id] : it.stock,
+      _q: norm([it.ref, it.descripcion, it.detalle, it.categoria, it.ubicacion, it.observaciones, it.estado].join(' '))
+    }));
+    porRef = new Map(inventario.map((it) => [it.id, it]));
+  }
+  cargarInventario();
 
   /** Lista de despacho: ref -> { cantidad, novedades } (conserva el orden de selección). */
   const seleccion = new Map();
   let categoria = 'Todas';
+  let limite = PAGINA;
 
   const draft = lsGet(LS.draft);
   if (draft && Array.isArray(draft.items)) {
@@ -100,23 +120,30 @@
 
   function renderResultados() {
     const lista = filtrar();
-    $('resultCount').textContent = `${lista.length} de ${inventario.length} materiales`;
+    $('resultCount').textContent = `${lista.length} de ${inventario.length} ítems · ${origenInventario}`;
     $('empty').classList.toggle('hidden', lista.length > 0);
-    $('results').innerHTML = lista.map((it) => {
-      const sel = seleccion.get(it.ref);
+    const resto = lista.length - limite;
+    $('btnMas').classList.toggle('hidden', resto <= 0);
+    $('btnMas').textContent = `Ver ${Math.min(resto, PAGINA)} más (quedan ${resto})`;
+    $('results').innerHTML = lista.slice(0, limite).map((it) => {
+      const sel = seleccion.get(it.id);
       const agotado = it.stock <= 0;
+      const inactivo = it.estado === 'INACTIVO';
       return `
-      <li class="${cardClasses(!!sel)}" data-ref="${esc(it.ref)}">
+      <li class="${cardClasses(!!sel)}" data-ref="${esc(it.id)}">
         <div class="flex gap-3">
           <input type="checkbox" class="js-check mt-1 h-5 w-5 shrink-0 cursor-pointer rounded border-slate-300 text-amber-600 focus:ring-amber-500"
             aria-label="Agregar ${esc(it.descripcion)}" ${sel ? 'checked' : ''} />
           <div class="min-w-0 flex-1">
             <p class="js-toggle cursor-pointer text-sm font-medium leading-snug">${esc(it.descripcion)}</p>
+            ${it.detalle ? `<p class="mt-0.5 text-xs text-slate-500">${esc(it.detalle)}</p>` : ''}
             <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-              <span class="font-mono text-slate-600">${esc(it.ref)}</span>
+              ${it.ref ? `<span class="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] text-white">${esc(it.ref)}</span>` : ''}
               <span class="rounded bg-slate-100 px-1.5 py-0.5">${esc(it.categoria)}</span>
-              <span>${esc(it.ubicacion)}</span>
+              ${it.ubicacion ? `<span>📍 ${esc(it.ubicacion)}</span>` : ''}
+              ${inactivo ? '<span class="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">INACTIVO</span>' : ''}
             </p>
+            ${it.observaciones && it.observaciones.toUpperCase() !== 'INACTIVO' ? `<p class="mt-1 text-xs italic text-amber-700">${esc(it.observaciones)}</p>` : ''}
           </div>
         </div>
         <div class="mt-3 flex items-center justify-between gap-3">
@@ -160,7 +187,8 @@
       const prev = seleccion.get(ref);
       seleccion.set(ref, { cantidad: n, novedades: prev ? prev.novedades : '' });
       const it = porRef.get(ref);
-      if (n > it.stock) toast(`Atención: ${it.ref} solo tiene ${fmt(it.stock)} ${it.unidad} en stock.`, 'warn');
+      if (!prev && it.estado === 'INACTIVO') toast(`Atención: ${it.descripcion} figura como INACTIVO.`, 'warn');
+      else if (n > it.stock) toast(`Atención: ${it.ref || it.descripcion} solo tiene ${fmt(it.stock)} ${it.unidad} en stock.`, 'warn');
     }
     syncCard(ref);
     renderDespacho(desdeLista ? ref : null);
@@ -189,7 +217,7 @@
           <span class="mt-0.5 w-6 shrink-0 text-right text-xs font-semibold text-slate-400">${i}</span>
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium leading-snug">${esc(it.descripcion)}</p>
-            <p class="font-mono text-[11px] text-slate-500">${esc(it.ref)}</p>
+            <p class="font-mono text-[11px] text-slate-500">${esc([it.ref, it.detalle].filter(Boolean).join(' · '))}</p>
           </div>
           <button type="button" class="js-remove -mr-1 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600" aria-label="Quitar">
             <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/></svg>
@@ -331,6 +359,31 @@
     }
   }
 
+  /** Carga un Excel de inventario (mismo formato que Inventario_2.xlsx) y lo deja como inventario activo. */
+  async function importarInventario(file) {
+    try {
+      if (!window.XLSX) throw new Error('No se pudo cargar la librería de Excel (revise la conexión a internet).');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', sheetRows: 5000 });
+      const items = InventarioParser.parseLibro(XLSX, wb);
+      if (!items.length) throw new Error('No se encontraron hojas con columnas ITEM, EQUIPO/DESCRIPCION y CANT.');
+      if (seleccion.size && !confirm('Cargar un inventario nuevo vacía la lista de despacho actual. ¿Continuar?')) return;
+      lsSet(LS.inventario, { archivo: file.name, fecha: new Date().toLocaleDateString('es-CO'), items });
+      lsSet(LS.stock, {});
+      seleccion.clear();
+      categoria = 'Todas';
+      limite = PAGINA;
+      cargarInventario();
+      renderChips();
+      renderResultados();
+      renderDespacho();
+      guardarBorrador();
+      toast(`Inventario cargado: ${items.length} ítems de ${file.name}.`);
+    } catch (err) {
+      console.error(err);
+      toast('No se pudo leer el inventario: ' + err.message, 'error');
+    }
+  }
+
   /** Lee clientes, solicitantes de la hoja "CODIFICACION DE CLIENTES" para autocompletar. */
   async function cargarListasPlantilla() {
     try {
@@ -368,13 +421,17 @@
     let t;
     $('search').addEventListener('input', () => {
       clearTimeout(t);
-      t = setTimeout(renderResultados, 80);
+      t = setTimeout(() => {
+        limite = PAGINA;
+        renderResultados();
+      }, 80);
     });
 
     $('chips').addEventListener('click', (e) => {
       const b = e.target.closest('[data-cat]');
       if (!b) return;
       categoria = b.dataset.cat;
+      limite = PAGINA;
       renderChips();
       renderResultados();
     });
@@ -437,12 +494,24 @@
     });
 
     $('btnResetInv').addEventListener('click', () => {
-      if (!confirm('¿Restablecer el stock a los valores iniciales de prueba?')) return;
+      if (!confirm('¿Restablecer el stock a las cantidades del Excel de inventario?')) return;
       lsSet(LS.stock, {});
-      window.INVENTARIO_MOCK.forEach((m) => (porRef.get(m.ref).stock = m.stock));
+      cargarInventario();
       renderResultados();
       renderDespacho();
-      toast('Inventario restablecido.');
+      toast('Stock restablecido.');
+    });
+
+    $('btnImport').addEventListener('click', () => $('fileInv').click());
+    $('fileInv').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      e.target.value = '';
+      if (file) await importarInventario(file);
+    });
+
+    $('btnMas').addEventListener('click', () => {
+      limite += PAGINA;
+      renderResultados();
     });
 
     $('form').addEventListener('input', guardarBorrador);

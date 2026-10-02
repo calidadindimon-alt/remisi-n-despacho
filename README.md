@@ -1,6 +1,6 @@
 # Remisiones de Despacho
 
-Aplicación web ligera (HTML + Tailwind CSS vía CDN + JavaScript Vanilla) para buscar materiales de construcción e industria en el inventario, armar una lista de despacho y generar la **remisión en Excel** con el formato oficial de la empresa.
+Aplicación web ligera (HTML + Tailwind CSS vía CDN + JavaScript Vanilla) para buscar herramientas y equipos en el inventario (`Inventario_2.xlsx`), armar una lista de despacho y generar la **remisión en Excel** con el formato oficial de la empresa.
 
 ## Cómo usarla
 
@@ -8,17 +8,41 @@ Aplicación web ligera (HTML + Tailwind CSS vía CDN + JavaScript Vanilla) para 
 - **Servidor local:** `python3 -m http.server 8080` y abra <http://localhost:8080>.
 - **GitHub Pages:** en *Settings → Pages* elija la rama y la carpeta `/ (root)`.
 
-Necesita conexión a internet para cargar Tailwind y JSZip desde sus CDN.
+Necesita conexión a internet para cargar Tailwind, JSZip y SheetJS desde sus CDN.
 
 ### Flujo
 
-1. Escriba en el buscador (filtra en tiempo real, sin importar tildes ni mayúsculas; admite varias palabras: `tuberia 4 sch 40`). También puede filtrar por categoría.
+1. Escriba en el buscador (filtra en tiempo real, sin importar tildes ni mayúsculas; admite varias palabras: `taladro bosch`, una placa `ESIDM011`, un serial o una ubicación `Malambo`). También puede filtrar por hoja del inventario.
 2. Marque el ítem o escriba una cantidad (con `−`/`+` o el teclado). Se agrega a la **Lista de despacho**.
 3. En la lista ajuste cantidades y escriba las *Novedades* de cada ítem.
 4. Llene los datos de la remisión (obra/proyecto, fecha, responsable, observaciones, quién entrega/recibe). Obra y personas se autocompletan con la hoja *CODIFICACION DE CLIENTES* de la plantilla.
 5. Presione **Generar Remisión (.xlsx)**.
 
-En celular la lista de despacho se abre desde la barra inferior; en PC queda fija a la derecha. La lista y los datos se guardan como borrador en el navegador. Si "Descontar cantidades del stock" está activo, el stock se rebaja al generar (botón *Restablecer* para volver a los datos de prueba).
+En celular la lista de despacho se abre desde la barra inferior; en PC queda fija a la derecha. La lista y los datos se guardan como borrador en el navegador. Si "Descontar cantidades del stock" está activo, el stock se rebaja al generar (botón *Restablecer stock* para volver a las cantidades del Excel).
+
+## Inventario
+
+El inventario por defecto (`js/inventario.js`) se generó de **Inventario_2.xlsx**: 616 ítems de las hojas *Herramienta eléctrica*, *Generadores, vehículos y montacargas*, *Herramienta mecánica*, *Herramienta manual* y *Equipos de cómputo e impresoras*. Se omiten las hojas ocultas (*Tabla1*, copia de herramienta mecánica; *Convenciones*) y *Locaciones IDM*, que no es inventario despachable.
+
+| Columna del inventario | Uso en la app / remisión |
+|---|---|
+| EQUIPO o DESCRIPCION + CLASE + MARCA | DESCRIPCIÓN |
+| PLACA DE INVENTARIO | REFERENCIA |
+| CANT (vacío = 1) | stock disponible |
+| MODELO, SERIAL, UBICACIÓN, OBSERVACIONES | se muestran y se pueden buscar |
+| ESTADO / OBSERVACIONES = INACTIVO | se marca en rojo y avisa al agregarlo |
+
+**Actualizar el inventario:**
+
+- Desde la app: botón **Cargar inventario** y elija el Excel actualizado (mismo formato). Queda guardado en ese navegador.
+- Para todos los usuarios: regenere el archivo por defecto y súbalo al repositorio:
+
+  ```bash
+  npm install xlsx
+  node scripts/build-inventario.js ruta/Inventario_2.xlsx
+  ```
+
+Las columnas se ubican por el nombre del encabezado, así que agregar hojas o mover columnas no rompe la lectura.
 
 ## Formato de la remisión
 
@@ -46,10 +70,10 @@ node scripts/embed-template.js
 ```
 index.html                 Interfaz (Tailwind CDN)
 js/app.js                  Buscador, checklist, lista de despacho y generación del .xlsx
-js/inventario.js           Datos de prueba (perfiles HEA/IPE/UPN, tubería, válvulas, accesorios…)
+js/parser.js               Lector del Excel de inventario (navegador y Node)
+js/inventario.js           Inventario por defecto (generado de Inventario_2.xlsx)
 js/plantilla.js            Plantilla .xlsx embebida en Base64 (generada)
 assets/plantilla_remision.xlsx  Formato base de la remisión
 scripts/embed-template.js  Regenera js/plantilla.js
+scripts/build-inventario.js  Regenera js/inventario.js desde el Excel
 ```
-
-Para usar un inventario real, reemplace el arreglo de `js/inventario.js` con los mismos campos: `ref`, `descripcion`, `categoria`, `unidad`, `stock`, `ubicacion`.
