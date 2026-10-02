@@ -32,6 +32,8 @@ El inventario por defecto (`js/inventario.js`) se generó de **Inventario_2.xlsx
 | MODELO, SERIAL, UBICACIÓN, OBSERVACIONES | se muestran y se pueden buscar |
 | ESTADO / OBSERVACIONES = INACTIVO | se marca en rojo y avisa al agregarlo |
 
+**Ítems que no están en el inventario:** botón **+ Agregar** (junto al buscador, o desde el aviso "Agregar … como ítem nuevo" cuando una búsqueda no encuentra nada). Se piden descripción, placa, modelo/serial, cantidad, unidad, categoría y ubicación, y se puede mandar directo a la lista de despacho. Quedan guardados en ese navegador, marcados como *AGREGADO*, y se pueden eliminar desde su tarjeta. Para que todos los usuarios los vean, agréguelos al Excel de inventario.
+
 **Actualizar el inventario:**
 
 - Desde la app: botón **Cargar inventario** y elija el Excel actualizado (mismo formato). Queda guardado en ese navegador.

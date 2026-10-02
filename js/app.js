@@ -22,7 +22,8 @@
   };
   const CAPACIDAD = FORMATO.ultimaFila - FORMATO.primeraFila + 1;
 
-  const LS = { stock: 'remisiones.stock.v2', draft: 'remisiones.draft.v2', inventario: 'remisiones.inventario.v2' };
+  const LS = { stock: 'remisiones.stock.v2', draft: 'remisiones.draft.v2', inventario: 'remisiones.inventario.v2', agregados: 'remisiones.agregados.v1' };
+  const CAT_MANUAL = 'Agregados manualmente';
   const PAGINA = 1000; // tarjetas por página: alto para que siempre se vea el inventario completo
 
   /* ----------------------------- Utilidades -------------------------------- */
@@ -69,7 +70,9 @@
   }
 
   function cargarInventario() {
-    const { items, origen } = inventarioFuente();
+    const fuente = inventarioFuente();
+    const items = fuente.items.concat(lsGet(LS.agregados) || []); // + ítems agregados con el botón "Agregar"
+    const origen = fuente.origen;
     const stockGuardado = lsGet(LS.stock) || {};
     origenInventario = origen;
     inventario = items.map((it) => ({
@@ -123,6 +126,8 @@
     const lista = filtrar();
     $('resultCount').textContent = `${lista.length} de ${inventario.length} ítems · ${origenInventario}`;
     $('empty').classList.toggle('hidden', lista.length > 0);
+    const textoBusqueda = $('search').value.trim();
+    $('emptyTexto').textContent = textoBusqueda ? `"${textoBusqueda}"` : '';
     const resto = lista.length - limite;
     $('btnMas').classList.toggle('hidden', resto <= 0);
     $('btnMas').textContent = `Ver ${Math.min(resto, PAGINA)} más (quedan ${resto})`;
@@ -143,6 +148,7 @@
               <span class="rounded bg-slate-100 px-1.5 py-0.5">${esc(it.categoria)}</span>
               ${it.ubicacion ? `<span>📍 ${esc(it.ubicacion)}</span>` : ''}
               ${inactivo ? '<span class="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">INACTIVO</span>' : ''}
+              ${it.manual ? '<span class="rounded bg-sky-100 px-1.5 py-0.5 font-semibold text-sky-700">AGREGADO</span><button type="button" class="js-del text-red-600 underline hover:text-red-700">Eliminar</button>' : ''}
             </p>
             ${it.observaciones && it.observaciones.toUpperCase() !== 'INACTIVO' ? `<p class="mt-1 text-xs italic text-amber-700">${esc(it.observaciones)}</p>` : ''}
           </div>
@@ -360,6 +366,70 @@
     }
   }
 
+  /* ------------------------ Agregar ítems manuales ------------------------ */
+  function abrirNuevo(texto) {
+    $('formNuevo').reset();
+    $('nDesc').value = texto.toUpperCase();
+    $('nCant').disabled = false;
+    $('dlCategorias').innerHTML = [...new Set([CAT_MANUAL, ...inventario.map((i) => i.categoria)])]
+      .map((c) => `<option value="${esc(c)}"></option>`).join('');
+    $('dlgNuevo').showModal();
+    setTimeout(() => (texto ? $('nRef') : $('nDesc')).focus(), 50);
+  }
+
+  function guardarNuevo() {
+    const descripcion = $('nDesc').value.trim().replace(/\s+/g, ' ').toUpperCase();
+    if (!descripcion) {
+      $('nDesc').focus();
+      return toast('Escriba la descripción del ítem.', 'error');
+    }
+    const ref = $('nRef').value.trim().toUpperCase();
+    if (ref) {
+      const existe = inventario.find((i) => i.ref && i.ref.toUpperCase() === ref);
+      if (existe && !confirm(`La placa ${ref} ya existe: "${existe.descripcion}". ¿Agregar de todas formas?`)) return;
+    }
+    const stock = Number($('nStock').value);
+    const item = {
+      id: 'MAN-' + Date.now().toString(36),
+      ref,
+      descripcion,
+      detalle: $('nDetalle').value.trim(),
+      categoria: $('nCat').value.trim() || CAT_MANUAL,
+      unidad: $('nUnidad').value.trim() || 'und',
+      stock: Number.isFinite(stock) && stock >= 0 ? stock : 1,
+      ubicacion: $('nUbic').value.trim(),
+      estado: '',
+      observaciones: '',
+      manual: true
+    };
+    const agregados = lsGet(LS.agregados) || [];
+    agregados.push(item);
+    lsSet(LS.agregados, agregados);
+    $('dlgNuevo').close();
+
+    cargarInventario();
+    categoria = 'Todas';
+    renderChips();
+    $('search').value = descripcion;
+    limite = PAGINA;
+    renderResultados();
+    const cant = Number($('nCant').value);
+    if ($('nDespachar').checked && cant > 0) setCantidad(item.id, cant);
+    toast(`"${descripcion}" agregado al inventario${$('nDespachar').checked && cant > 0 ? ' y a la lista de despacho' : ''}.`);
+  }
+
+  function eliminarAgregado(id) {
+    const it = porRef.get(id);
+    if (!it || !it.manual || !confirm(`¿Eliminar "${it.descripcion}" del inventario?`)) return;
+    lsSet(LS.agregados, (lsGet(LS.agregados) || []).filter((a) => a.id !== id));
+    seleccion.delete(id);
+    cargarInventario();
+    renderChips();
+    renderResultados();
+    renderDespacho();
+    guardarBorrador();
+  }
+
   /** Carga un Excel de inventario (mismo formato que Inventario_2.xlsx) y lo deja como inventario activo. */
   async function importarInventario(file) {
     try {
@@ -412,6 +482,8 @@
       const personas = columna('F', 2, 15);
       $('dlClientes').innerHTML = clientes.map((c) => `<option value="${esc(c)}"></option>`).join('');
       $('dlPersonas').innerHTML = personas.map((p) => `<option value="${esc(p)}"></option>`).join('');
+      const unidades = columna('J', 2, 20);
+      $('dlUnidades').innerHTML = unidades.map((u) => `<option value="${esc(u)}"></option>`).join('');
     } catch (e) {
       console.warn('No se pudieron leer las listas de la plantilla', e);
     }
@@ -446,6 +518,7 @@
       if (e.target.closest('.js-inc')) setCantidad(ref, (actual ? actual.cantidad : 0) + 1);
       else if (e.target.closest('.js-dec')) setCantidad(ref, Math.max(0, (actual ? actual.cantidad : 0) - 1));
       else if (e.target.closest('.js-toggle')) setCantidad(ref, actual ? 0 : 1);
+      else if (e.target.closest('.js-del')) eliminarAgregado(ref);
     });
     results.addEventListener('change', (e) => {
       if (!e.target.classList.contains('js-check')) return;
@@ -508,6 +581,16 @@
       const file = e.target.files[0];
       e.target.value = '';
       if (file) await importarInventario(file);
+    });
+
+    $('btnNuevo').addEventListener('click', () => abrirNuevo(''));
+    $('btnNuevoVacio').addEventListener('click', () => abrirNuevo($('search').value.trim()));
+    $('btnNuevoCerrar').addEventListener('click', () => $('dlgNuevo').close());
+    $('btnNuevoCancelar').addEventListener('click', () => $('dlgNuevo').close());
+    $('nDespachar').addEventListener('change', (e) => ($('nCant').disabled = !e.target.checked));
+    $('formNuevo').addEventListener('submit', (e) => {
+      e.preventDefault();
+      guardarNuevo();
     });
 
     $('btnMas').addEventListener('click', () => {
