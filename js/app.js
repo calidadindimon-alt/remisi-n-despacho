@@ -22,7 +22,14 @@
   };
   const CAPACIDAD = FORMATO.ultimaFila - FORMATO.primeraFila + 1;
 
-  const LS = { stock: 'remisiones.stock.v2', draft: 'remisiones.draft.v2', inventario: 'remisiones.inventario.v2', agregados: 'remisiones.agregados.v1' };
+  const LS = {
+    remision: 'remisiones.salidaActual.v1', // salida en curso: ítems seleccionados + datos del formulario
+    draftViejo: 'remisiones.draft.v2', // formato anterior, se migra una sola vez
+    stock: 'remisiones.stock.v2',
+    inventario: 'remisiones.inventario.v2',
+    agregados: 'remisiones.agregados.v1'
+  };
+  const CAMPOS_FORM = ['fObra', 'fFecha', 'fResp', 'fObs', 'fEntrega', 'fRecibe'];
   const CAT_MANUAL = 'Agregados manualmente';
   const PAGINA = 1000; // tarjetas por página: alto para que siempre se vea el inventario completo
 
@@ -36,7 +43,12 @@
     try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
   }
   function lsSet(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* almacenamiento no disponible */ }
+    try {
+      localStorage.setItem(key, JSON.stringify(val));
+      return true;
+    } catch (e) {
+      return false; // modo privado, sin espacio o almacenamiento bloqueado
+    }
   }
 
   let toastTimer;
@@ -89,15 +101,95 @@
   let categoria = 'Todas';
   let limite = PAGINA;
 
-  const draft = lsGet(LS.draft);
-  if (draft && Array.isArray(draft.items)) {
-    draft.items.forEach(([ref, v]) => porRef.has(ref) && seleccion.set(ref, v));
+  /** Descargas hechas de la salida en curso (se conservan para mostrar el estado). */
+  let descargas = { total: 0, ultima: null };
+
+  /* ---------------------- Persistencia en localStorage ---------------------
+   * La salida en curso (lista de despacho + datos del formulario) se guarda en
+   * cada cambio y se recupera al abrir la página. Generar el Excel NO la borra:
+   * solo el botón "Nueva remisión" la elimina. Así, si faltó algo después de
+   * descargar, basta con agregarlo y volver a generar.
+   * ------------------------------------------------------------------------ */
+
+  /** Guarda el estado completo de la salida en curso. Se llama tras cada cambio. */
+  function saveToLocalStorage() {
+    const campos = {};
+    CAMPOS_FORM.forEach((id) => (campos[id] = $(id).value));
+    const items = [...seleccion.entries()].map(([id, s]) => {
+      const it = porRef.get(id) || {};
+      // Además del id se guardan placa y descripción para reubicar el ítem si cambia el inventario.
+      return { id, ref: it.ref || '', descripcion: it.descripcion || '', cantidad: s.cantidad, novedades: s.novedades || '' };
+    });
+    const ok = lsSet(LS.remision, { version: 1, items, campos, descargas, actualizado: new Date().toISOString() });
+    renderEstadoGuardado(ok);
   }
 
-  function guardarBorrador() {
-    const campos = {};
-    ['fObra', 'fFecha', 'fResp', 'fObs', 'fEntrega', 'fRecibe'].forEach((id) => (campos[id] = $(id).value));
-    lsSet(LS.draft, { items: [...seleccion.entries()], campos });
+  /** Busca en el inventario actual el ítem guardado: por id, luego por placa, luego por descripción única. */
+  function resolverItem(g) {
+    if (porRef.has(g.id)) return g.id;
+    if (g.ref) {
+      const porPlaca = inventario.find((i) => i.ref && i.ref.toUpperCase() === g.ref.toUpperCase());
+      if (porPlaca) return porPlaca.id;
+    }
+    if (g.descripcion) {
+      const iguales = inventario.filter((i) => i.descripcion === g.descripcion);
+      if (iguales.length === 1) return iguales[0].id;
+    }
+    return null;
+  }
+
+  /**
+   * Lee la salida guardada y reconstruye la lista de despacho (Map `seleccion`) y el formulario.
+   * Devuelve cuántos ítems se recuperaron y cuáles ya no existen en el inventario.
+   * El checklist se marca solo: renderResultados() lee `seleccion` para cada tarjeta.
+   */
+  function loadFromLocalStorage() {
+    let guardado = lsGet(LS.remision);
+    if (!guardado) {
+      // Migración desde el borrador anterior ({ items: [[id, {cantidad, novedades}]], campos })
+      const viejo = lsGet(LS.draftViejo);
+      if (viejo && Array.isArray(viejo.items)) {
+        guardado = { items: viejo.items.map(([id, v]) => ({ id, ...v })), campos: viejo.campos || {} };
+      }
+    }
+    seleccion.clear();
+    const perdidos = [];
+    if (guardado && Array.isArray(guardado.items)) {
+      for (const g of guardado.items) {
+        const id = resolverItem(g);
+        const cantidad = Number(g.cantidad);
+        if (id && cantidad > 0) seleccion.set(id, { cantidad, novedades: g.novedades || '' });
+        else if (!id) perdidos.push(g.descripcion || g.ref || g.id);
+      }
+    }
+    if (guardado && guardado.campos) {
+      CAMPOS_FORM.forEach((id) => ($(id).value = guardado.campos[id] || ''));
+    }
+    descargas = (guardado && guardado.descargas) || { total: 0, ultima: null };
+    return { recuperados: seleccion.size, perdidos };
+  }
+
+  /** Borra la salida guardada (solo lo usa "Nueva remisión"). */
+  function clearLocalStorage() {
+    try {
+      localStorage.removeItem(LS.remision);
+      localStorage.removeItem(LS.draftViejo);
+    } catch (e) { /* almacenamiento no disponible */ }
+  }
+
+  function renderEstadoGuardado(ok = true) {
+    const el = $('saveStatus');
+    if (!el) return;
+    if (!ok) {
+      el.textContent = 'No se pudo guardar en este navegador (modo privado o sin espacio).';
+      el.className = 'mt-1 text-center text-[11px] text-red-600';
+      return;
+    }
+    const hora = (iso) => new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+    const partes = [seleccion.size ? '✓ Guardado en este navegador' : 'Lista vacía'];
+    if (descargas.total) partes.push(`descargada ${descargas.total} ${descargas.total === 1 ? 'vez' : 'veces'} (última ${hora(descargas.ultima)})`);
+    el.textContent = partes.join(' · ');
+    el.className = 'mt-1 text-center text-[11px] text-slate-500';
   }
 
   /* ----------------------------- Buscador ---------------------------------- */
@@ -199,7 +291,7 @@
     }
     syncCard(ref);
     renderDespacho(desdeLista ? ref : null);
-    guardarBorrador();
+    saveToLocalStorage();
   }
 
   function renderDespacho(refEnFoco) {
@@ -341,29 +433,56 @@
       const slug = norm(obra).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase() || 'OBRA';
       descargar(blob, `Remision_${slug}_${fechaISO}.xlsx`);
 
-      if ($('fDescontar').checked) {
-        const nuevoStock = lsGet(LS.stock) || {};
-        for (const [ref, s] of seleccion) {
-          const it = porRef.get(ref);
-          it.stock = Math.max(0, +(it.stock - s.cantidad).toFixed(4));
-          nuevoStock[ref] = it.stock;
-        }
-        lsSet(LS.stock, nuevoStock);
-        seleccion.clear();
-        $('fObs').value = '';
-        renderResultados();
-        renderDespacho();
-        guardarBorrador();
-        toast('Remisión generada y stock actualizado.');
-      } else {
-        toast('Remisión generada.');
-      }
+      // La lista NO se borra: queda guardada para corregirla y volver a generar si faltó algo.
+      descargas = { total: descargas.total + 1, ultima: new Date().toISOString() };
+      saveToLocalStorage();
+      toast(descargas.total > 1
+        ? `Salida generada de nuevo (versión ${descargas.total}). La lista sigue guardada.`
+        : 'Salida generada. La lista sigue guardada por si necesita agregar algo.');
     } catch (err) {
       console.error(err);
       toast('Error al generar la remisión: ' + err.message, 'error');
     } finally {
       btn.disabled = seleccion.size === 0;
     }
+  }
+
+  /**
+   * Único punto donde se borra la salida guardada: vacía la lista, limpia el formulario
+   * (conserva responsable y quién entrega) y, si está marcado, descuenta del stock lo despachado.
+   */
+  function nuevaRemision() {
+    const hayDatos = seleccion.size > 0 || $('fObra').value.trim() || $('fObs').value.trim();
+    if (!hayDatos) return toast('La lista ya está vacía.', 'warn');
+    const sinDescargar = seleccion.size > 0 && descargas.total === 0;
+    const aviso = sinDescargar
+      ? '⚠ Esta salida todavía NO se ha descargado.\n\n¿Borrar la lista y empezar una nueva remisión?'
+      : '¿Terminar esta salida y empezar una nueva remisión?\n\nSe borrará la lista guardada en este navegador.';
+    if (!confirm(aviso)) return;
+
+    let descontados = 0;
+    if ($('fDescontar').checked && descargas.total > 0) {
+      const nuevoStock = lsGet(LS.stock) || {};
+      for (const [id, s] of seleccion) {
+        const it = porRef.get(id);
+        if (!it) continue;
+        it.stock = Math.max(0, +(it.stock - s.cantidad).toFixed(4));
+        nuevoStock[id] = it.stock;
+        descontados++;
+      }
+      lsSet(LS.stock, nuevoStock);
+    }
+
+    const refs = [...seleccion.keys()];
+    seleccion.clear();
+    descargas = { total: 0, ultima: null };
+    ['fObra', 'fObs', 'fRecibe'].forEach((id) => ($(id).value = ''));
+    $('fFecha').value = hoyISO();
+    clearLocalStorage();
+    refs.forEach(syncCard);
+    renderDespacho();
+    renderEstadoGuardado();
+    toast(descontados ? `Nueva remisión lista. Stock descontado de ${descontados} ítem(s).` : 'Nueva remisión lista.');
   }
 
   /* ------------------------ Agregar ítems manuales ------------------------ */
@@ -427,7 +546,7 @@
     renderChips();
     renderResultados();
     renderDespacho();
-    guardarBorrador();
+    saveToLocalStorage();
   }
 
   /** Carga un Excel de inventario (mismo formato que Inventario_2.xlsx) y lo deja como inventario activo. */
@@ -437,18 +556,19 @@
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', sheetRows: 5000 });
       const items = InventarioParser.parseLibro(XLSX, wb);
       if (!items.length) throw new Error('No se encontraron hojas con columnas ITEM, EQUIPO/DESCRIPCION y CANT.');
-      if (seleccion.size && !confirm('Cargar un inventario nuevo vacía la lista de despacho actual. ¿Continuar?')) return;
+      saveToLocalStorage(); // la lista en curso se conserva y se reubica en el inventario nuevo
       lsSet(LS.inventario, { archivo: file.name, fecha: new Date().toLocaleDateString('es-CO'), items });
       lsSet(LS.stock, {});
-      seleccion.clear();
       categoria = 'Todas';
       limite = PAGINA;
       cargarInventario();
+      const { perdidos } = loadFromLocalStorage();
+      if (perdidos.length) toast(`${perdidos.length} ítem(s) de la lista no están en el inventario nuevo y se quitaron.`, 'warn');
       renderChips();
       renderResultados();
       renderDespacho();
-      guardarBorrador();
-      toast(`Inventario cargado: ${items.length} ítems de ${file.name}.`);
+      saveToLocalStorage();
+      if (!perdidos.length) toast(`Inventario cargado: ${items.length} ítems de ${file.name}.`);
     } catch (err) {
       console.error(err);
       toast('No se pudo leer el inventario: ' + err.message, 'error');
@@ -538,7 +658,7 @@
       const ref = li.dataset.ref;
       if (e.target.classList.contains('js-nov')) {
         seleccion.get(ref).novedades = e.target.value;
-        guardarBorrador();
+        saveToLocalStorage();
       } else if (e.target.classList.contains('js-dqty')) {
         const n = Number(e.target.value);
         if (n > 0) {
@@ -558,14 +678,7 @@
       if (e.target.closest('.js-remove')) setCantidad(e.target.closest('li').dataset.ref, 0);
     });
 
-    $('btnClear').addEventListener('click', () => {
-      if (seleccion.size === 0 || !confirm('¿Vaciar la lista de despacho?')) return;
-      const refs = [...seleccion.keys()];
-      seleccion.clear();
-      refs.forEach(syncCard);
-      renderDespacho();
-      guardarBorrador();
-    });
+    $('btnNuevaRemision').addEventListener('click', nuevaRemision);
 
     $('btnResetInv').addEventListener('click', () => {
       if (!confirm('¿Restablecer el stock a las cantidades del Excel de inventario?')) return;
@@ -598,7 +711,7 @@
       renderResultados();
     });
 
-    $('form').addEventListener('input', guardarBorrador);
+    $('form').addEventListener('input', saveToLocalStorage);
     $('btnGenerar').addEventListener('click', generarRemision);
     $('btnOpenPanel').addEventListener('click', () => abrirPanel(true));
     $('btnClosePanel').addEventListener('click', () => abrirPanel(false));
@@ -608,15 +721,29 @@
 
   /* -------------------------------- Inicio --------------------------------- */
   function init() {
-    if (draft && draft.campos) {
-      Object.entries(draft.campos).forEach(([id, v]) => $(id) && ($(id).value = v || ''));
-    }
+    // 1) Recuperar la salida guardada ANTES de dibujar, para que el checklist salga ya marcado.
+    const { recuperados, perdidos } = loadFromLocalStorage();
     if (!$('fFecha').value) $('fFecha').value = hoyISO();
+    // 2) Dibujar: cada tarjeta consulta `seleccion` (checkbox marcado + cantidad) y la lista se reconstruye.
     renderChips();
     renderResultados();
     renderDespacho();
+    renderEstadoGuardado();
     initEventos();
     cargarListasPlantilla();
+    if (recuperados) toast(`Se recuperó la salida en curso: ${recuperados} ítem(s).`);
+    if (perdidos.length) toast(`${perdidos.length} ítem(s) guardados ya no están en el inventario.`, 'warn');
+    if (perdidos.length) saveToLocalStorage();
+
+    // 3) Si la app está abierta en otra pestaña, mantener ambas sincronizadas.
+    window.addEventListener('storage', (e) => {
+      if (e.key !== LS.remision) return;
+      const antes = [...seleccion.keys()];
+      loadFromLocalStorage();
+      new Set([...antes, ...seleccion.keys()]).forEach(syncCard);
+      renderDespacho();
+      renderEstadoGuardado();
+    });
   }
 
   init();

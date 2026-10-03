@@ -16,9 +16,17 @@ Necesita conexión a internet para cargar Tailwind, JSZip y SheetJS desde sus CD
 2. Marque el ítem o escriba una cantidad (con `−`/`+` o el teclado). Se agrega a la **Lista de despacho**.
 3. En la lista ajuste cantidades y escriba las *Novedades* de cada ítem.
 4. Llene los datos de la remisión (obra/proyecto, fecha, responsable, observaciones, quién entrega/recibe). Obra y personas se autocompletan con la hoja *CODIFICACION DE CLIENTES* de la plantilla.
-5. Presione **Generar Remisión (.xlsx)**.
+5. Presione **Generar Salida de Herramienta (.xlsx)**.
 
-En celular la lista de despacho se abre desde la barra inferior; en PC queda fija a la derecha. La lista y los datos se guardan como borrador en el navegador. Si "Descontar cantidades del stock" está activo, el stock se rebaja al generar (botón *Restablecer stock* para volver a las cantidades del Excel).
+En celular la lista de despacho se abre desde la barra inferior; en PC queda fija a la derecha.
+
+### Guardado automático y "me faltó algo"
+
+- Cada cambio (marcar un ítem, cambiar una cantidad, escribir novedades o datos del formulario) se guarda en el `localStorage` del navegador (`saveToLocalStorage` en `js/app.js`).
+- Al abrir la página se recupera la salida en curso (`loadFromLocalStorage`): la lista de despacho se reconstruye y el buscador muestra los ítems marcados con sus cantidades.
+- **Generar la salida no borra nada.** Si faltó algo, se agrega y se vuelve a generar; el pie del panel indica cuántas veces se ha descargado.
+- **Nueva remisión** (arriba de la lista) es lo único que borra la lista guardada. Si la casilla está marcada, en ese momento se descuenta del stock lo despachado (*Restablecer stock* vuelve a las cantidades del Excel).
+- El guardado es por navegador y dispositivo: lo armado en el celular no aparece en el PC.
 
 ## Inventario
 
